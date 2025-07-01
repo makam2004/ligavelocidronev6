@@ -1,0 +1,216 @@
+<!-- public/admin.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel de Administración - Liga Velocidrone</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: 0 auto; }
+    h1 { color: #333; }
+    .section { margin-bottom: 30px; padding: 20px; background: #f5f5f5; border-radius: 5px; }
+    form { margin-top: 15px; }
+    label { display: block; margin-top: 10px; }
+    input, select { width: 100%; padding: 8px; margin-top: 5px; }
+    button { margin-top: 15px; padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    .message { margin-top: 15px; padding: 10px; border-radius: 4px; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>⚙️ Panel de Administración</h1>
+
+  <div class="section">
+    <h2>🏁 Añadir Nuevo Track</h2>
+    <form id="formNuevoTrack">
+      <label>ID del Track:
+        <input type="number" id="track_id" required>
+      </label>
+      <label>Nombre del Track (si no se encuentra en la API):
+        <input type="text" id="track_nombre">
+      </label>
+      <label>Escenario (si no se encuentra en la API):
+        <input type="text" id="track_escenario">
+      </label>
+      <label>Versión del Simulador:
+        <input type="text" id="sim_version" value="1.16">
+      </label>
+      <label>Modo de Carrera:
+        <select id="race_mode">
+          <option value="3">1 Lap</option>
+          <option value="6" selected>3 Laps</option>
+          <option value="10">Weekly Time Trials (3 Laps)</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" id="es_oficial"> Track Oficial
+      </label>
+      <button type="button" onclick="verificarTrack()">Verificar con API</button>
+      <button type="submit" id="btnGuardar" disabled>Guardar Track</button>
+    </form>
+    <div id="message" class="message"></div>
+  </div>
+
+  <div class="section">
+    <h2>📊 Tracks Existentes</h2>
+    <table id="tracksTable">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Nombre</th>
+          <th>Escenario</th>
+          <th>Tipo</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Tus secciones existentes de ranking... -->
+
+  <script>
+    async function verificarTrack() {
+      const trackId = document.getElementById('track_id').value;
+      const simVersion = document.getElementById('sim_version').value;
+      const raceMode = document.getElementById('race_mode').value;
+      const messageDiv = document.getElementById('message');
+      
+      messageDiv.textContent = 'Verificando...';
+      messageDiv.className = 'message';
+
+      try {
+        const response = await fetch('/api/verificar-track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ track_id: trackId, sim_version: simVersion, race_mode: raceMode })
+        });
+
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+
+        if (data.existe) {
+          messageDiv.textContent = `✅ Track verificado. Ejemplo: ${data.data.ejemplo_jugador} - ${data.data.ejemplo_tiempo}`;
+          messageDiv.className = 'message success';
+          
+          // Habilitar botón de guardar
+          document.getElementById('btnGuardar').disabled = false;
+          
+          // Si no tenemos nombre, sugerir uno
+          if (!document.getElementById('track_nombre').value) {
+            document.getElementById('track_nombre').value = `Track ${trackId}`;
+          }
+        } else {
+          messageDiv.textContent = 'ℹ️ ' + data.message;
+          messageDiv.className = 'message';
+          
+          // Requerir nombre y escenario manual
+          document.getElementById('track_nombre').required = true;
+          document.getElementById('track_escenario').required = true;
+          document.getElementById('btnGuardar').disabled = false;
+        }
+      } catch (error) {
+        messageDiv.textContent = '❌ Error: ' + error.message;
+        messageDiv.className = 'message error';
+      }
+    }
+
+    document.getElementById('formNuevoTrack').onsubmit = async (e) => {
+      e.preventDefault();
+      
+      const trackData = {
+        track_id: document.getElementById('track_id').value,
+        nombre: document.getElementById('track_nombre').value,
+        escenario: document.getElementById('track_escenario').value,
+        sim_version: document.getElementById('sim_version').value,
+        race_mode: document.getElementById('race_mode').value,
+        es_oficial: document.getElementById('es_oficial').checked
+      };
+
+      const messageDiv = document.getElementById('message');
+      messageDiv.textContent = 'Guardando...';
+      messageDiv.className = 'message';
+
+      try {
+        const response = await fetch('/api/nuevo-track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(trackData)
+        });
+
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+
+        messageDiv.textContent = '✅ ' + data.message;
+        messageDiv.className = 'message success';
+        
+        // Limpiar formulario
+        document.getElementById('formNuevoTrack').reset();
+        document.getElementById('btnGuardar').disabled = true;
+        
+        // Actualizar lista de tracks
+        cargarTracks();
+      } catch (error) {
+        messageDiv.textContent = '❌ Error: ' + error.message;
+        messageDiv.className = 'message error';
+      }
+    };
+
+    async function cargarTracks() {
+      try {
+        const response = await fetch('/api/tracks');
+        const tracks = await response.json();
+        
+        const tbody = document.querySelector('#tracksTable tbody');
+        tbody.innerHTML = '';
+        
+        tracks.forEach(track => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${track.track_id}</td>
+            <td>${track.nombre}</td>
+            <td>${track.escenario}</td>
+            <td>${track.es_oficial ? 'Oficial' : 'No oficial'}</td>
+            <td>
+              <button onclick="eliminarTrack(${track.id})">Eliminar</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (error) {
+        console.error('Error al cargar tracks:', error);
+      }
+    }
+
+    async function eliminarTrack(id) {
+      if (confirm('¿Estás seguro de eliminar este track?')) {
+        try {
+          const response = await fetch(`/api/tracks/${id}`, { method: 'DELETE' });
+          const data = await response.json();
+          
+          if (data.success) {
+            alert('Track eliminado correctamente');
+            cargarTracks();
+          } else {
+            throw new Error(data.error || 'Error al eliminar');
+          }
+        } catch (error) {
+          alert('Error: ' + error.message);
+        }
+      }
+    }
+
+    // Cargar tracks al iniciar
+    cargarTracks();
+  </script>
+</body>
+</html>
