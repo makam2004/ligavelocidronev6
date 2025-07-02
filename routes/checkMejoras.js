@@ -1,7 +1,7 @@
 import express from "express";
 import supabase from "../supabaseClient.js";
 import axios from "axios";
-import { tiemposMejorados } from "./tiemposMejorados.js";
+import tiemposMejorados from "./tiemposMejorados.js"; 
 
 const router = express.Router();
 
