@@ -167,7 +167,9 @@
 
     async function cargarTracks() {
       try {
-        const response = await fetch('/api/tracks');
+    const response = await fetch('/api/tracks', { // 👈 Asegúrate de incluir credentials
+      credentials: 'include'
+	    });
         const tracks = await response.json();
         
         const tbody = document.querySelector('#tracksTable tbody');

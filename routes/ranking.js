@@ -1,3 +1,4 @@
+// routes/ranking.js
 import express from 'express';
 import supabase from '../supabaseClient.js';
 
@@ -5,21 +6,28 @@ const router = express.Router();
 
 router.get('/api/enviar-ranking-anual', async (_req, res) => {
   try {
-    // Fallback manual (sin JOIN Supabase)
-    const { data: jugadores } = await supabase.from('jugadores').select('id, nombre');
-    const { data: ranking } = await supabase.from('ranking_anual').select('jugador_id, puntos');
+    // 1. Obtener jugadores con puntos anuales
+    const { data: jugadores, error } = await supabase
+      .from('jugadores')
+      .select('nombre, puntos_anuales')
+      .not('puntos_anuales', 'is', null) // 👈 Filtra nulos
+      .order('puntos_anuales', { ascending: false });
 
-    const nombres = Object.fromEntries(jugadores.map(j => [j.id, j.nombre]));
+    if (error) throw error;
+    if (!jugadores || jugadores.length === 0) { // 👈 Maneja caso vacío
+      return res.json([]);
+    }
 
-    const resultado = ranking.map(r => ({
-      nombre: nombres[r.jugador_id] || 'Desconocido',
-      puntos: r.puntos
+    // 2. Formatear respuesta
+    const resultado = jugadores.map(j => ({
+      nombre: j.nombre || 'Desconocido',
+      puntos: j.puntos_anuales || 0
     }));
 
-    res.json(resultado.sort((a, b) => b.puntos - a.puntos));
+    res.json(resultado);
   } catch (err) {
     console.error('Error al obtener ranking anual:', err);
-    res.status(500).json({ error: 'Error interno' });
+    res.status(500).json([]); // 👈 Devuelve array vacío en caso de error
   }
 });
 
