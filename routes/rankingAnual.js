@@ -1,29 +1,42 @@
-// routes/rankingAnual.js
 import express from 'express';
 import supabase from '../supabaseClient.js';
 
 const router = express.Router();
 
-router.get('/api/enviar-ranking-anual', async (req, res) => {
+router.get('/api/enviar-ranking-anual', async (_req, res) => {
   try {
+    // 1. Consulta con select explícito y conversión de tipos
     const { data, error } = await supabase
       .from('jugadores')
-      .select('id, nombre, puntos_anuales')
-      .not('puntos_anuales', 'is', null) // Filtra jugadores sin puntos
+      .select('nombre, puntos_anuales')
+      .not('puntos_anuales', 'is', null)
       .order('puntos_anuales', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error Supabase:', error);
+      throw new Error(error.message);
+    }
 
-    // Formatear respuesta
-    const resultado = data.map(jugador => ({
-      nombre: jugador.nombre || 'Desconocido',
-      puntos_anuales: jugador.puntos_anuales || 0 // Asegura valor numérico
+    // 2. Validación de datos y formateo seguro
+    const ranking = data.map(j => ({
+      nombre: j.nombre || 'Jugador sin nombre',
+      puntos: Number(j.puntos_anuales) || 0 // Conversión explícita a número
     }));
 
-    res.json(resultado);
+    // 3. Log de diagnóstico (solo en desarrollo)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Datos crudos de Supabase:', data);
+      console.log('Ranking formateado:', ranking);
+    }
+
+    res.json(ranking);
+
   } catch (err) {
-    console.error('Error al obtener ranking anual:', err);
-    res.status(500).json([]); // Devuelve array vacío en caso de error
+    console.error('Error completo:', err);
+    res.status(500).json({
+      error: 'Error al obtener el ranking',
+      detalle: process.env.NODE_ENV !== 'production' ? err.message : undefined
+    });
   }
 });
 
