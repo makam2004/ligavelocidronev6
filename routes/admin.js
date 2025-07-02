@@ -6,7 +6,7 @@ import fetch from 'node-fetch';
 
 const router = express.Router();
 
-// Configuración de autenticación básica
+// Configuración de autenticación
 const auth = basicAuth({
   users: { 
     [process.env.ADMIN_USER]: process.env.ADMIN_PASS 
@@ -15,10 +15,32 @@ const auth = basicAuth({
   unauthorizedResponse: 'Acceso no autorizado'
 });
 
-// 1. Ruta para verificar tracks con la API de Velocidrone
+// Middleware para verificar conexión a Supabase
+router.use(auth, async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from('configuracion')
+      .select('*')
+      .limit(1);
+      
+    if (error) throw new Error('Error conectando a Supabase');
+    next();
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Error de conexión a la base de datos',
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+});
+
+// Ruta para verificar tracks con API de Velocidrone
 router.post('/api/verificar-track', auth, async (req, res) => {
   const { track_id, sim_version, race_mode } = req.body;
-  
+
+  if (!track_id) {
+    return res.status(400).json({ error: 'ID de track requerido' });
+  }
+
   try {
     const response = await fetch('https://velocidrone.co.uk/api/leaderboard', {
       method: 'POST',
@@ -26,10 +48,14 @@ router.post('/api/verificar-track', auth, async (req, res) => {
         'Authorization': `Bearer ${process.env.VELOCIDRONE_API_TOKEN}`,
         'Content-Type': 'application/x-www-form-urlencoded'
       },
-      body: `post_data=${encodeURIComponent(
-        `track_id=${track_id}&sim_version=${sim_version || '1.16'}` +
-        `&offset=0&count=10&race_mode=${race_mode || 6}&protected_track_value=1`
-      )}`
+      body: new URLSearchParams({
+        track_id,
+        sim_version: sim_version || '1.16',
+        offset: 0,
+        count: 10,
+        race_mode: race_mode || 6,
+        protected_track_value: 1
+      })
     });
 
     const data = await response.json();
@@ -37,32 +63,32 @@ router.post('/api/verificar-track', auth, async (req, res) => {
     if (!data.tracktimes || data.tracktimes.length === 0) {
       return res.json({ 
         existe: false,
-        message: 'Track encontrado pero sin tiempos. Completa nombre y escenario manualmente.' 
+        message: 'Track encontrado pero sin tiempos registrados' 
       });
     }
 
     res.json({
       existe: true,
       data: {
-        track_id,
-        sim_version,
-        race_mode,
         ejemplo_tiempo: data.tracktimes[0].lap_time,
         ejemplo_jugador: data.tracktimes[0].playername
       }
     });
   } catch (error) {
-    console.error('Error al verificar track:', error);
     res.status(500).json({ 
-      error: 'Error al conectar con la API de Velocidrone',
-      detalle: error.message 
+      error: 'Error al conectar con API de Velocidrone',
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
     });
   }
 });
 
-// 2. Ruta para añadir nuevos tracks
+// Ruta para añadir nuevos tracks
 router.post('/api/nuevo-track', auth, async (req, res) => {
   const { track_id, nombre, escenario, sim_version, race_mode, es_oficial } = req.body;
+
+  if (!track_id || !nombre || !escenario) {
+    return res.status(400).json({ error: 'Datos incompletos' });
+  }
 
   try {
     const { data, error } = await supabase
@@ -71,44 +97,75 @@ router.post('/api/nuevo-track', auth, async (req, res) => {
         track_id,
         nombre,
         escenario,
-        sim_version,
-        race_mode,
-        es_oficial,
-        fecha_creacion: new Date().toISOString()
+        sim_version: sim_version || '1.16',
+        race_mode: race_mode || 6,
+        es_oficial: es_oficial || false
       }])
       .select();
 
     if (error) throw error;
 
-    // Notificación a Telegram
+    // Notificación a Telegram si está configurado
     if (process.env.TELEGRAM_BOT_TOKEN1) {
       await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN1}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: process.env.TELEGRAM_CHAT_ID1,
-          text: `🆕 Nuevo track añadido:\n\n🏁 ${nombre}\n🌍 ${escenario}\n🆔 ID: ${track_id}\n🔧 Tipo: ${es_oficial ? 'Oficial' : 'No oficial'}`,
-          parse_mode: 'HTML',
-          message_thread_id: 4
+          text: `🆕 Nuevo track añadido:\n\n🏁 ${nombre}\n🌍 ${escenario}\n🆔 ID: ${track_id}`,
+          parse_mode: 'HTML'
         })
       });
     }
 
     res.json({ 
       success: true, 
-      message: '✅ Track añadido correctamente',
       track: data[0] 
     });
   } catch (error) {
-    console.error('Error al añadir track:', error);
     res.status(500).json({ 
-      error: 'Error al guardar el track',
-      detalle: error.message 
+      error: 'Error al guardar track',
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
     });
   }
 });
 
-// 3. Ruta para listar todos los tracks
+// Ruta para actualizar configuración principal
+router.post('/admin/update-tracks', auth, async (req, res) => {
+  const { track1_escena, track1_pista, track2_escena, track2_pista } = req.body;
+
+  try {
+    // 1. Actualizar configuración
+    const { error: configError } = await supabase
+      .from('configuracion')
+      .upsert([{
+        id: 1,
+        track1_escena,
+        track1_pista,
+        track2_escena,
+        track2_pista,
+        updated_at: new Date().toISOString()
+      }], { onConflict: ['id'] });
+
+    if (configError) throw configError;
+
+    // 2. Actualizar ranking anual
+    const { error: rpcError } = await supabase.rpc('incrementar_ranking_anual');
+    if (rpcError) throw rpcError;
+
+    res.json({ 
+      success: true,
+      message: 'Configuración y ranking actualizados'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Error en la actualización',
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+});
+
+// Ruta para listar tracks
 router.get('/api/tracks', auth, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -121,12 +178,12 @@ router.get('/api/tracks', auth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       error: 'Error al obtener tracks',
-      detalle: error.message 
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
     });
   }
 });
 
-// 4. Ruta para eliminar tracks
+// Ruta para eliminar tracks
 router.delete('/api/tracks/:id', auth, async (req, res) => {
   try {
     const { error } = await supabase
@@ -139,33 +196,7 @@ router.delete('/api/tracks/:id', auth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       error: 'Error al eliminar track',
-      detalle: error.message 
-    });
-  }
-});
-
-// 5. Ruta para actualizar configuración (existente)
-router.post('/admin/update-tracks', auth, async (req, res) => {
-  try {
-    const { track1_escena, track1_pista, track2_escena, track2_pista } = req.body;
-    
-    const { error } = await supabase
-      .from('configuracion')
-      .upsert([{
-        id: 1,
-        track1_escena,
-        track1_pista,
-        track2_escena,
-        track2_pista,
-        updated_at: new Date().toISOString()
-      }], { onConflict: ['id'] });
-
-    if (error) throw error;
-    res.json({ success: true, message: 'Configuración actualizada' });
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Error al actualizar configuración',
-      detalle: error.message 
+      detalle: process.env.NODE_ENV !== 'production' ? error.message : undefined
     });
   }
 });
